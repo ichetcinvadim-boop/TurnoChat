@@ -1,0 +1,56 @@
+name: Publish Island Custom v2
+on:
+  push:
+    branches: [island-custom-v2-public]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore and verify Windows EXE
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import base64
+          import struct
+          files=sorted(Path("island-custom-v2/parts").glob("IslandCustomB64_*.txt"))
+          if len(files)!=17:
+              raise SystemExit("Expected 17 EXE chunks, got "+str(len(files)))
+          encoded="".join(p.read_text(encoding="utf-8").strip() for p in files)
+          data=base64.b64decode(encoded,validate=True)
+          expected="7479b9f3990df739ca55c40c063cd1af3ac6d98d3a31c36559a093672e83c296"
+          actual=hashlib.sha256(data).hexdigest()
+          if actual!=expected: raise SystemExit("SHA256 mismatch: "+actual)
+          if len(data)!=12628992 or data[:2]!=b"MZ": raise SystemExit("Invalid Windows EXE")
+          offset=struct.unpack_from("<I",data,0x3c)[0]
+          if data[offset:offset+4]!=b"PE\0\0": raise SystemExit("Missing PE signature")
+          Path("dist").mkdir(exist_ok=True)
+          Path("dist/Island-Custom-v2.exe").write_bytes(data)
+          print("Verified",len(data),"bytes; SHA256",actual)
+          PY
+      - name: Publish direct-download release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view island-custom-v2 --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload island-custom-v2 dist/Island-Custom-v2.exe --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create island-custom-v2 dist/Island-Custom-v2.exe --repo "$GITHUB_REPOSITORY" --title "Island Custom v2" --notes "Windows executable with UI changes. SHA-256: 7479b9f3990df739ca55c40c063cd1af3ac6d98d3a31c36559a093672e83c296. Warning: embedded license key is extractable; do not redistribute."
+          fi
+      - name: Keep a build artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Island-Custom-v2
+          path: dist/Island-Custom-v2.exe
+          retention-days: 7
+          if-no-files-found: ignore
