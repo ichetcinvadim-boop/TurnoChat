@@ -1,0 +1,41 @@
+name: Build Island Key Builder Windows EXE
+on:
+  push:
+    branches: [island-key-builder-exe]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install "pyinstaller>=6.10,<7" "brotli>=1.1,<2"
+      - name: Python syntax test
+        run: python -m py_compile island-key-builder/key_builder.py
+      - name: Build standalone Windows EXE
+        run: python -m PyInstaller --onefile --windowed --clean --noconfirm --name IslandKeyBuilder --hidden-import=brotli island-key-builder/key_builder.py
+      - name: Check EXE is valid PE and includes expected signature
+        shell: pwsh
+        run: |
+          $p = "dist/IslandKeyBuilder.exe"
+          if (-not (Test-Path $p)) { throw "EXE missing" }
+          $bytes = [System.IO.File]::ReadAllBytes($p)
+          if ($bytes.Length -lt 100000) { throw "EXE unexpectedly small" }
+          if ($bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw "Missing MZ signature" }
+          $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+          if ([System.Text.Encoding]::ASCII.GetString($bytes, $pe, 4) -ne "PE`0`0") { throw "Missing PE signature" }
+          Get-FileHash $p -Algorithm SHA256 | Format-List
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IslandKeyBuilder-Windows
+          path: dist/IslandKeyBuilder.exe
+          retention-days: 30
+          if-no-files-found: error
